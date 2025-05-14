@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
 
-# Load training CSV (relative to src/)
+# Load training CSV
 train_df = pd.read_csv("../train.csv")
 
 # Function to load and preprocess images
