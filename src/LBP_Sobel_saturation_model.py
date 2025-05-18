@@ -11,7 +11,7 @@ from sklearn.metrics import accuracy_score, classification_report
 import joblib
 
 # Load only the first 1000 entries for quick testing
-df = pd.read_csv("../train.csv").iloc[:10000]
+df = pd.read_csv("../train.csv").iloc[:1000]
 
 def extract_features(img_bgr):
     """
