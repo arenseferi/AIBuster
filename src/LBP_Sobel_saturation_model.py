@@ -10,9 +10,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
 
-# Load only the first 1000 entries for quick testing
-df = pd.read_csv("../train.csv").iloc[:1000]
-
 def extract_features(img_bgr):
     """
     For a BGR image, compute:
@@ -21,7 +18,6 @@ def extract_features(img_bgr):
       - High-pass filter stats (fine detail)
       - HSV channel mean/std (color & lighting)
     """
-    # Convert to grayscale
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
     # LBP texture
@@ -48,7 +44,6 @@ def extract_features(img_bgr):
     mean_s, std_s = s.mean(), s.std()
     mean_v, std_v = v.mean(), v.std()
 
-    # Combine all features
     return np.hstack([
         hist,
         mean_sobel, std_sobel,
@@ -59,30 +54,28 @@ def extract_features(img_bgr):
     ])
 
 def load_features(df, size=(64, 64)):
-    """
-    Read and resize each image, extract features, collect labels and paths.
-    Returns X (features), y (labels), paths (file paths).
-    """
     X, y, paths = [], [], []
     base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
     for row in tqdm(df.itertuples(), total=len(df), desc="Extracting features"):
-        relpath = row.file_name
-        fullpath = os.path.join(base, relpath)
+        fullpath = os.path.join(base, row.file_name)
         img = cv2.imread(fullpath)
         if img is None:
             continue
         img = cv2.resize(img, size)
-        feats = extract_features(img)
-        X.append(feats)
+        X.append(extract_features(img))
         y.append(row.label)
-        paths.append(relpath)
+        paths.append(row.file_name)
     return np.array(X), np.array(y), np.array(paths)
 
-# Build feature matrix, labels, and paths for 1k images
-X, y, paths = load_features(df)
-print(f"Extracted {X.shape[0]} samples × {X.shape[1]} features")
+# Load first 1000 entries for quick testing
+df = pd.read_csv("../train.csv").iloc[:1000]
+print(f"Loaded {len(df)} entries from train.csv")
 
-# Split into 80% train / 20% validation (also split paths)
+# Extract features
+X, y, paths = load_features(df)
+print(f"Extracted features for {X.shape[0]} samples × {X.shape[1]} features")
+
+# Split into 80% train / 20% validation
 X_train, X_val, y_train, y_val, paths_train, paths_val = train_test_split(
     X, y, paths, test_size=0.2, random_state=42
 )
@@ -95,7 +88,7 @@ X_val   = scaler.transform(X_val)
 
 # Train LDA classifier
 lda = LinearDiscriminantAnalysis()
-print("\nTraining LDA...")
+print("Training LDA classifier...")
 lda.fit(X_train, y_train)
 
 # Evaluate on validation set
@@ -108,9 +101,9 @@ print(classification_report(y_val, y_pred, digits=4))
 out_dir = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
 joblib.dump(scaler, os.path.join(out_dir, "scaler.joblib"))
 joblib.dump(lda,    os.path.join(out_dir, "lda_model.joblib"))
-print(f"\nSaved scaler & LDA model to {out_dir}")
+print(f"Saved scaler & LDA model to {out_dir}")
 
-# Identify misclassified images and save them for inspection
+# Identify and save misclassified images
 wrong_mask = (y_pred != y_val)
 wrong_df = pd.DataFrame({
     "file_name": paths_val[wrong_mask],

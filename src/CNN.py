@@ -1,99 +1,91 @@
-import os
 import pandas as pd
 import numpy as np
 import cv2
-from tqdm import tqdm
+import os
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report
-import tensorflow as tf
-from tensorflow.keras import layers, models
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import joblib
 
-# Load only the first 1000 entries for quick testing
-df = pd.read_csv("../train.csv").iloc[:1000]
+# Make sure TensorFlow / Keras is installed:
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.utils import to_categorical
 
-# Constants
-IMG_SIZE = (64, 64)
-BATCH_SIZE = 32
-EPOCHS = 10
+# — Load and sample 1 000 entries —
+df = pd.read_csv("../train.csv").sample(n=1000, random_state=42).reset_index(drop=True)
 
-# Load images into arrays
-def load_images(df):
-    images = []
-    labels = []
-    paths = []
-    base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
-    for row in tqdm(df.itertuples(), total=len(df), desc="Loading images"):
-        fullpath = os.path.join(base, row.file_name)
-        img = cv2.imread(fullpath)
-        if img is None:
-            continue
-        img = cv2.resize(img, IMG_SIZE)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        images.append(img.astype("float32") / 255.0)  # normalize to [0,1]
-        labels.append(row.label)
-        paths.append(row.file_name)
-    return np.array(images), np.array(labels), np.array(paths)
+# — Parameters —
+img_size = (64, 64)
+batch_size = 32
+epochs = 10
 
-X, y, paths = load_images(df)
-print(f"Loaded {X.shape[0]} images of shape {X.shape[1:]}")
+# — Load images & labels —
+X, y = [], []
+base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
+for row in df.itertuples():
+    path = os.path.join(base, row.file_name)
+    img = cv2.imread(path)
+    if img is None:
+        continue
+    img = cv2.resize(img, img_size)
+    img = img.astype("float32") / 255.0
+    X.append(img)
+    y.append(row.label)
 
-# Train/validation split
-X_train, X_val, y_train, y_val, paths_train, paths_val = train_test_split(
-    X, y, paths, test_size=0.2, random_state=42
+X = np.array(X)
+y = np.array(y)
+print(f"Loaded {len(X)} images, shape={X.shape}")
+
+# — Train/Test Split —
+X_train, X_val, y_train, y_val = train_test_split(
+    X, y, test_size=0.2, random_state=42
 )
 print(f"Training on {len(X_train)} samples; validating on {len(X_val)} samples")
 
-# Build a simple CNN
-model = models.Sequential([
-    layers.Input(shape=(*IMG_SIZE, 3)),
-    layers.Conv2D(32, (3,3), activation='relu', padding='same'),
-    layers.MaxPooling2D((2,2)),
-    layers.Conv2D(64, (3,3), activation='relu', padding='same'),
-    layers.MaxPooling2D((2,2)),
-    layers.Conv2D(128, (3,3), activation='relu', padding='same'),
-    layers.MaxPooling2D((2,2)),
-    layers.Flatten(),
-    layers.Dense(64, activation='relu'),
-    layers.Dropout(0.5),
-    layers.Dense(1, activation='sigmoid')
+# — One-hot encode labels —
+num_classes = len(np.unique(y))
+y_train_cat = to_categorical(y_train, num_classes)
+y_val_cat   = to_categorical(y_val, num_classes)
+
+# — Build CNN model —
+model = Sequential([
+    Conv2D(32, (3,3), activation='relu', input_shape=img_size + (3,)),
+    MaxPooling2D(),
+    Conv2D(64, (3,3), activation='relu'),
+    MaxPooling2D(),
+    Conv2D(128, (3,3), activation='relu'),
+    MaxPooling2D(),
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(num_classes, activation='softmax')
 ])
+model.compile(optimizer='adam',
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
 
-model.compile(
-    optimizer='adam',
-    loss='binary_crossentropy',
-    metrics=['accuracy']
-)
-
-model.summary()
-
-# Train the CNN
+# — Train —
 history = model.fit(
-    X_train, y_train,
-    validation_data=(X_val, y_val),
-    epochs=EPOCHS,
-    batch_size=BATCH_SIZE
+    X_train, y_train_cat,
+    validation_data=(X_val, y_val_cat),
+    epochs=epochs,
+    batch_size=batch_size
 )
 
-# Evaluate on validation set
-y_val_prob = model.predict(X_val).ravel()
-y_val_pred = (y_val_prob >= 0.5).astype(int)
-acc = accuracy_score(y_val, y_val_pred)
+# — Evaluate —
+y_pred_prob = model.predict(X_val)
+y_pred = np.argmax(y_pred_prob, axis=1)
+acc = accuracy_score(y_val, y_pred)
 print(f"\nValidation Accuracy: {acc:.2%}\n")
-print(classification_report(y_val, y_val_pred, digits=4))
 
-# Save the trained model
+print("Classification Report:")
+print(classification_report(y_val, y_pred, digits=4))
+
+print("Confusion Matrix:")
+print(confusion_matrix(y_val, y_pred))
+
+# — Save model & history —
 out_dir = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
-model_path = os.path.join(out_dir, "cnn_model.h5")
-model.save(model_path)
-print(f"Saved CNN model to: {model_path}")
-
-# Save misclassified examples for inspection
-wrong_mask = (y_val_pred != y_val)
-wrong_df = pd.DataFrame({
-    "file_name": paths_val[wrong_mask],
-    "true_label": y_val[wrong_mask],
-    "predicted_label": y_val_pred[wrong_mask]
-})
-wrong_csv = os.path.join(out_dir, "cnn_wrong_predictions.csv")
-wrong_df.to_csv(wrong_csv, index=False)
-print(f"Saved misclassified image list to: {wrong_csv}")
+model.save(os.path.join(out_dir, "cnn_model.h5"))
+joblib.dump(history.history, os.path.join(out_dir, "cnn_history.joblib"))
+print(f"\nSaved CNN model and history to: {out_dir}")

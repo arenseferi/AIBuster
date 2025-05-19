@@ -6,21 +6,11 @@ import os
 from skimage.feature import local_binary_pattern
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.svm import SVC
 import joblib
 
-# Load only the first 1000 entries for quick testing
-df = pd.read_csv("../train.csv").iloc[:70000]
-
 def extract_features(img_bgr):
-    """
-    For a BGR image, compute:
-      - LBP histogram on grayscale (texture)
-      - Sobel edge magnitude stats (sharpness)
-      - High-pass filter stats (fine detail)
-      - HSV channel mean/std (color & lighting)
-    """
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
     # LBP texture
@@ -47,7 +37,6 @@ def extract_features(img_bgr):
     mean_s, std_s = s.mean(), s.std()
     mean_v, std_v = v.mean(), v.std()
 
-    # Combine all features
     return np.hstack([
         hist,
         mean_sobel, std_sobel,
@@ -58,63 +47,72 @@ def extract_features(img_bgr):
     ])
 
 def load_features(df, size=(64, 64)):
-    """
-    Read and resize each image, extract features, collect labels and paths.
-    Returns X (features), y (labels), paths (file paths).
-    """
     X, y, paths = [], [], []
     base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
     for row in tqdm(df.itertuples(), total=len(df), desc="Extracting features"):
-        relpath = row.file_name
-        fullpath = os.path.join(base, relpath)
+        fullpath = os.path.join(base, row.file_name)
         img = cv2.imread(fullpath)
         if img is None:
             continue
         img = cv2.resize(img, size)
-        feats = extract_features(img)
-        X.append(feats)
+        X.append(extract_features(img))
         y.append(row.label)
-        paths.append(relpath)
+        paths.append(row.file_name)
     return np.array(X), np.array(y), np.array(paths)
 
-# Build feature matrix, labels, and paths for 1k images
-X, y, paths = load_features(df)
-print(f"Extracted {X.shape[0]} samples × {X.shape[1]} features")
+# — Load and limit to 1 000 samples —
+df = pd.read_csv("../train.csv").iloc[:1000].reset_index(drop=True)
+print(f"Loaded {len(df)} entries from train.csv")
 
-# Split into 80% train / 20% validation
+# — Feature extraction —
+X, y, paths = load_features(df)
+print(f"Extracted features for {X.shape[0]} samples × {X.shape[1]} features")
+
+# — Split 80/20 —
 X_train, X_val, y_train, y_val, paths_train, paths_val = train_test_split(
     X, y, paths, test_size=0.2, random_state=42
 )
 print(f"Training on {len(X_train)} samples; validating on {len(X_val)} samples")
 
-# Standardize features
+# — Standardize —
 scaler = StandardScaler()
 X_train = scaler.fit_transform(X_train)
 X_val   = scaler.transform(X_val)
 
-# Train SVM classifier with RBF kernel
-svm = SVC(kernel='rbf', C=1.0, gamma='scale')
+# — Train SVM —
+svm = SVC(kernel='rbf', C=1.0, gamma='scale', probability=False)
+print("\nTraining SVM classifier with RBF kernel...")
 svm.fit(X_train, y_train)
 
-# Evaluate on validation set
+# — Evaluate —
 y_pred = svm.predict(X_val)
-acc = accuracy_score(y_val, y_pred)
+acc    = accuracy_score(y_val, y_pred)
 print(f"\nValidation Accuracy: {acc:.2%}\n")
-print(classification_report(y_val, y_pred, digits=4))
 
-# Save scaler and model
+# Tabular classification report
+cr = classification_report(y_val, y_pred, output_dict=True, digits=4)
+cr_df = pd.DataFrame(cr).T
+print("Classification Report:")
+print(cr_df)
+
+# Confusion matrix
+cm = confusion_matrix(y_val, y_pred)
+print("\nConfusion Matrix:")
+print(cm)
+
+# — Save models & scaler —
 out_dir = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
 joblib.dump(scaler, os.path.join(out_dir, "scaler.joblib"))
-joblib.dump(svm, os.path.join(out_dir, "svm_model.joblib"))
+joblib.dump(svm,    os.path.join(out_dir, "svm_model.joblib"))
 print(f"\nSaved scaler & SVM model to {out_dir}")
 
-# Identify misclassified images and save them for inspection
+# — Save misclassified list —
 wrong_mask = (y_pred != y_val)
 wrong_df = pd.DataFrame({
     "file_name": paths_val[wrong_mask],
     "true_label": y_val[wrong_mask],
     "predicted_label": y_pred[wrong_mask]
 })
-wrong_csv = os.path.join(out_dir, "wrong_predictions.csv")
+wrong_csv = os.path.join(out_dir, "wrong_predictions_svm.csv")
 wrong_df.to_csv(wrong_csv, index=False)
 print(f"Saved misclassified image list to {wrong_csv}")
