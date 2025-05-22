@@ -7,7 +7,7 @@ from skimage.feature import local_binary_pattern
 from sklearn.model_selection import train_test_split
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import joblib
 
 def extract_features(img_bgr):
@@ -96,6 +96,13 @@ y_pred = lda.predict(X_val)
 acc    = accuracy_score(y_val, y_pred)
 print(f"\nValidation Accuracy: {acc:.2%}\n")
 print(classification_report(y_val, y_pred, digits=4))
+
+
+
+cm = confusion_matrix(y_val, y_pred)
+print("Confusion Matrix:")
+print(cm)
+
 
 # Save scaler and model
 out_dir = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
