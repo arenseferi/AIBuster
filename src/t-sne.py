@@ -9,32 +9,34 @@ import matplotlib.pyplot as plt
 import time
 
 def extract_features(img_bgr):
+    # Convert BGR image to grayscale for feature extraction
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-    # LBP texture
+    # Compute LBP histogram for texture
     lbp = local_binary_pattern(gray, P=8, R=1, method="uniform")
-    n_bins = 10
+    n_bins = 10  # Number of bins for LBP histogram
     hist, _ = np.histogram(lbp.ravel(), bins=n_bins, range=(0, n_bins))
-    hist = hist.astype(float) / (hist.sum() + 1e-7)
+    hist = hist.astype(float) / (hist.sum() + 1e-7)  # Normalize histogram
 
-    # Sobel edge magnitude
+    # Compute Sobel edge magnitude stats for sharpness
     sx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
     sy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
     mag = np.hypot(sx, sy)
-    mean_sobel, std_sobel = mag.mean(), mag.std()
+    mean_sobel, std_sobel = mag.mean(), mag.std()  # Mean and std of edge magnitudes
 
-    # High-pass filter
+    # Apply high-pass filter to capture fine detail
     blurred = cv2.GaussianBlur(gray, (5, 5), sigmaX=1)
     highpass = cv2.subtract(gray, blurred)
-    mean_hp, std_hp = highpass.mean(), highpass.std()
+    mean_hp, std_hp = highpass.mean(), highpass.std()  # Mean and std of high-pass image
 
-    # HSV stats
+    # Convert to HSV and compute color channel stats
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-    mean_h, std_h = h.mean(), h.std()
-    mean_s, std_s = s.mean(), s.std()
-    mean_v, std_v = v.mean(), v.std()
+    h, s, v = cv2.split(hsv)  # Split into H, S, V channels
+    mean_h, std_h = h.mean(), h.std()  # Hue stats
+    mean_s, std_s = s.mean(), s.std()  # Saturation stats
+    mean_v, std_v = v.mean(), v.std()  # Value stats
 
+    # Return concatenated feature vector
     return np.hstack([
         hist,
         mean_sobel, std_sobel,
@@ -45,57 +47,57 @@ def extract_features(img_bgr):
     ])
 
 def load_features(df, size=(64,64)):
+    # Lists to store features and labels
     X, y = [], []
-    base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
+    base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))  # Base image directory
     for row in tqdm(df.itertuples(), total=len(df), desc="Extracting features"):
-        fullpath = os.path.join(base, row.file_name)
-        img = cv2.imread(fullpath)
+        fullpath = os.path.join(base, row.file_name)  # Full path to image
+        img = cv2.imread(fullpath)  # Read color image
         if img is None:
-            continue
-        img = cv2.resize(img, size)
-        X.append(extract_features(img))
-        y.append(row.label)
-    return np.array(X), np.array(y)
+            continue  # Skip missing images
+        img = cv2.resize(img, size)  # Resize to target dimensions
+        X.append(extract_features(img))  # Extract and store features
+        y.append(row.label)  # Store corresponding label
+    return np.array(X), np.array(y)  # Return arrays of features and labels
 
-# Load and sample 1000 entries
+# Load and sample 1000 entries from the CSV for quick testing
 df = pd.read_csv("../train.csv").sample(n=1000, random_state=42).reset_index(drop=True)
 
-# Extract features
+# Extract features and labels
 X, y = load_features(df)
-print(f"Extracted features for {X.shape[0]} samples × {X.shape[1]} features")
+print(f"Extracted features for {X.shape[0]} samples × {X.shape[1]} features")  # Report extraction
 
-# Run t-SNE
+# Run t-SNE for 2D embedding
 print("Running t-SNE (this may take a minute)…")
-start = time.time()
-tsne = TSNE(n_components=2, perplexity=30, n_iter=1000, random_state=42)
-X2 = tsne.fit_transform(X)
-print(f"t-SNE done in {time.time() - start:.1f}s")
+start = time.time()  # Start timer
+tsne = TSNE(n_components=2, perplexity=30, n_iter=1000, random_state=42)  # Configure t-SNE
+X2 = tsne.fit_transform(X)  # Compute 2D embedding
+print(f"t-SNE done in {time.time() - start:.1f}s")  # Report elapsed time
 
-# Save embedding + labels
-out_dir = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
+# Save embedding with labels to CSV
+out_dir = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))  # Output directory
 embed_df = pd.DataFrame({
-    "PC1": X2[:,0],
-    "PC2": X2[:,1],
-    "label": y
+    "Dim1": X2[:,0],  # First t-SNE dimension
+    "Dim2": X2[:,1],  # Second t-SNE dimension
+    "label": y  # True class labels
 })
-embed_df.to_csv(os.path.join(out_dir, "tsne_embedding.csv"), index=False)
+embed_df.to_csv(os.path.join(out_dir, "tsne_embedding.csv"), index=False)  # Save CSV
 print(f"Saved t-SNE embedding to {out_dir}/tsne_embedding.csv")
 
-# Plot
-label_names = {0: "Real", 1: "AI"}
-plt.figure(figsize=(8,6))
+# Plot and save t-SNE scatter
+label_names = {0: "Real", 1: "AI"}  # Map numeric labels to names
+plt.figure(figsize=(8,6))  # New figure
 for lbl in np.unique(y):
-    mask = (y == lbl)
+    mask = (y == lbl)  # Mask for current label
     plt.scatter(
-        X2[mask,0],
-        X2[mask,1],
-        label=label_names[lbl],
-        alpha=0.6
+        X2[mask,0], X2[mask,1],  # Plot points
+        label=label_names[lbl],  # Use label name
+        alpha=0.6  # Semi-transparent
     )
-plt.xlabel("t-SNE Dim 1")
-plt.ylabel("t-SNE Dim 2")
-plt.title("t-SNE Visualization of All Samples")
-plt.legend(title="True class")
-plt.tight_layout()
-plt.savefig(os.path.join(out_dir, "tsne_scatter.png"))
+plt.xlabel("t-SNE Dim 1")  # X-axis label
+plt.ylabel("t-SNE Dim 2")  # Y-axis label
+plt.title("t-SNE Visualization of All Samples")  # Title
+plt.legend(title="True class")  # Legend with title
+plt.tight_layout()  # Adjust layout
+plt.savefig(os.path.join(out_dir, "tsne_scatter.png"))  # Save figure
 print(f"Saved t-SNE scatter to {out_dir}/tsne_scatter.png")

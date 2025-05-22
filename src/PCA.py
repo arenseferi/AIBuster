@@ -8,32 +8,34 @@ from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 
 def extract_features(img_bgr):
+    # Convert BGR image to grayscale for feature extraction
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-    # LBP texture
+    # Compute LBP histogram for texture
     lbp = local_binary_pattern(gray, P=8, R=1, method="uniform")
-    n_bins = 10
+    n_bins = 10  # Number of bins for LBP histogram
     hist, _ = np.histogram(lbp.ravel(), bins=n_bins, range=(0, n_bins))
-    hist = hist.astype(float) / (hist.sum() + 1e-7)
+    hist = hist.astype(float) / (hist.sum() + 1e-7)  # Normalize histogram
 
-    # Sobel edge magnitude
+    # Compute Sobel edge magnitude stats for sharpness
     sx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
     sy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
     mag = np.hypot(sx, sy)
-    mean_sobel, std_sobel = mag.mean(), mag.std()
+    mean_sobel, std_sobel = mag.mean(), mag.std()  # Mean and std of edges
 
-    # High-pass filter
+    # Apply high-pass filter to capture fine detail
     blurred = cv2.GaussianBlur(gray, (5, 5), sigmaX=1)
     highpass = cv2.subtract(gray, blurred)
-    mean_hp, std_hp = highpass.mean(), highpass.std()
+    mean_hp, std_hp = highpass.mean(), highpass.std()  # Stats of high-pass result
 
-    # HSV stats
+    # Convert to HSV and compute color channel stats
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
-    mean_h, std_h = h.mean(), h.std()
-    mean_s, std_s = s.mean(), s.std()
-    mean_v, std_v = v.mean(), v.std()
+    mean_h, std_h = h.mean(), h.std()  # Hue stats
+    mean_s, std_s = s.mean(), s.std()  # Saturation stats
+    mean_v, std_v = v.mean(), v.std()  # Value stats
 
+    # Return combined feature vector
     return np.hstack([
         hist,
         mean_sobel, std_sobel,
@@ -44,69 +46,68 @@ def extract_features(img_bgr):
     ])
 
 def load_features(df, size=(64,64)):
+    # Prepare lists to hold features and labels
     X, y = [], []
-    base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
+    base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))  # Base image directory
     for row in tqdm(df.itertuples(), total=len(df), desc="Extracting features"):
-        fullpath = os.path.join(base, row.file_name)
-        img = cv2.imread(fullpath)
+        fullpath = os.path.join(base, row.file_name)  # Full path to image
+        img = cv2.imread(fullpath)  # Read the image
         if img is None:
-            continue
-        img = cv2.resize(img, size)
-        X.append(extract_features(img))
-        y.append(row.label)
-    return np.array(X), np.array(y)
+            continue  # Skip if image can't be loaded
+        img = cv2.resize(img, size)  # Resize to target dimensions
+        X.append(extract_features(img))  # Extract and store features
+        y.append(row.label)  # Store corresponding label
+    return np.array(X), np.array(y)  # Return arrays of features and labels
 
-# Load and sample 1000 entries
+# Load and sample 1000 entries from train.csv for quick testing
 df = pd.read_csv("../train.csv").sample(n=1000, random_state=42).reset_index(drop=True)
 
+# Extract features and labels
 X, y = load_features(df)
-print(f"Extracted features for {X.shape[0]} samples × {X.shape[1]} features")
+print(f"Extracted features for {X.shape[0]} samples × {X.shape[1]} features")  # Report extraction
 
-# Compute PCA explained variance
-pca_full = PCA(n_components=min(X.shape[1], X.shape[0]))
-pca_full.fit(X)
-explained = pca_full.explained_variance_ratio_
+# Fit PCA to all features and get explained variance ratios
+pca_full = PCA(n_components=min(X.shape[1], X.shape[0]))  # Limit components
+pca_full.fit(X)  # Compute PCA
+explained = pca_full.explained_variance_ratio_  # Variance explained by each component
 for i, var in enumerate(explained[:10], start=1):
-    print(f"PC{i}: {var:.4f}")
+    print(f"PC{i}: {var:.4f}")  # Print first 10 ratios
 
-# Save explained variance ratios
-out_dir = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
+# Save explained variance ratios to CSV
+out_dir = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))  # Output directory
 np.savetxt(os.path.join(out_dir, "pca_explained_variance.csv"), explained, delimiter=",")
 print(f"Saved explained variance ratios to {out_dir}/pca_explained_variance.csv")
 
-# Scree plot
-plt.figure(figsize=(8,5))
-plt.plot(np.arange(1, len(explained)+1), explained, marker='o')
-plt.xlabel("Principal Component")
-plt.ylabel("Explained Variance Ratio")
-plt.title("PCA Scree Plot")
-plt.tight_layout()
-plt.savefig(os.path.join(out_dir, "pca_scree_plot.png"))
+# Create and save scree plot of explained variance
+plt.figure(figsize=(8,5))  # New figure
+plt.plot(np.arange(1, len(explained)+1), explained, marker='o')  # Plot variance ratio
+plt.xlabel("Principal Component")  # X-axis label
+plt.ylabel("Explained Variance Ratio")  # Y-axis label
+plt.title("PCA Scree Plot")  # Title
+plt.tight_layout()  # Adjust layout
+plt.savefig(os.path.join(out_dir, "pca_scree_plot.png"))  # Save figure
 print(f"Scree plot saved to {out_dir}/pca_scree_plot.png")
 
-# 2D projection
-# right after you load X, y …
+# Define label mapping for scatter plot
+label_names = {0: "Real", 1: "AI"}  # Map numeric labels to names
 
-# define a mapping
-label_names = {0: "Real", 1: "AI"}
+# Compute 2D PCA projection for visualization
+pca2 = PCA(n_components=2, random_state=42)  # Two principal components
+X2 = pca2.fit_transform(X)  # Transform feature set
 
-# 2D projection
-pca2 = PCA(n_components=2, random_state=42)
-X2 = pca2.fit_transform(X)
-
-plt.figure(figsize=(8,6))
+# Plot and save 2D PCA scatter
+plt.figure(figsize=(8,6))  # New figure
 for lbl in np.unique(y):
-    mask = (y == lbl)
+    mask = (y == lbl)  # Select points of current label
     plt.scatter(
-        X2[mask, 0],
-        X2[mask, 1],
-        label=label_names[lbl],
-        alpha=0.6
+        X2[mask, 0], X2[mask, 1],  # Plot PC1 vs PC2
+        label=label_names[lbl],  # Use mapped label name
+        alpha=0.6  # Semi-transparent points
     )
-plt.xlabel("PC1")
-plt.ylabel("PC2")
-plt.title("PCA 2D Projection of All Samples")
-plt.legend(title="True class")
-plt.tight_layout()
-plt.savefig(os.path.join(out_dir, "pca_2d_scatter.png"))
+plt.xlabel("PC1")  # X-axis label
+plt.ylabel("PC2")  # Y-axis label
+plt.title("PCA 2D Projection of All Samples")  # Title
+plt.legend(title="True class")  # Legend with title
+plt.tight_layout()  # Adjust layout
+plt.savefig(os.path.join(out_dir, "pca_2d_scatter.png"))  # Save figure
 print(f"2D PCA scatter saved to {out_dir}/pca_2d_scatter.png")

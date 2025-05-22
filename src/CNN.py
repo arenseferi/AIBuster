@@ -1,3 +1,4 @@
+# Needed imports
 import pandas as pd
 import numpy as np
 import cv2
@@ -6,65 +7,67 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import joblib
 
-# Make sure TensorFlow / Keras is installed:
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
-from tensorflow.keras.utils import to_categorical
+# to make sure Tensorflow, Keras is installed
+from tensorflow.keras.models import Sequential  # this to build a sequential neural network
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout  # CNN building blocks
+from tensorflow.keras.utils import to_categorical  # to turn labels into one hot vectors
 
-# — Load and sample 1 000 entries —
+# Load and sample n entries from the CSV for quick experimentation
 df = pd.read_csv("../train.csv").sample(n=1000, random_state=42).reset_index(drop=True)
 
-# — Parameters —
-img_size = (64, 64)
-batch_size = 32
-epochs = 10
+# Parameters for training 
+img_size = (64, 64)  # target image size
+batch_size = 32  # number of samples per gradient update
+epochs = 10  # number of times to iterate over the dataset
 
-# — Load images & labels —
+# Load images and labels into arrays
 X, y = [], []
-base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
+base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))  # base directory for image paths
 for row in df.itertuples():
-    path = os.path.join(base, row.file_name)
-    img = cv2.imread(path)
+    path = os.path.join(base, row.file_name)  # full path to the image file
+    img = cv2.imread(path)  # read the image from disk
     if img is None:
-        continue
-    img = cv2.resize(img, img_size)
-    img = img.astype("float32") / 255.0
-    X.append(img)
-    y.append(row.label)
+        continue  # skip if the image cant be loaded
+    img = cv2.resize(img, img_size)  # resize image to the wanted size
+    img = img.astype("float32") / 255.0  # normalize pixel values to [0,1]
+    X.append(img)  # add image to list
+    y.append(row.label)  # add corresponding label
 
-X = np.array(X)
-y = np.array(y)
-print(f"Loaded {len(X)} images, shape={X.shape}")
+X = np.array(X)  # convert list of images to NumPy array
+y = np.array(y)  
+print(f"Loaded {len(X)} images, shape={X.shape}")  # report load status
 
-# — Train/Test Split —
+# Split data into training and validation sets
 X_train, X_val, y_train, y_val = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 print(f"Training on {len(X_train)} samples; validating on {len(X_val)} samples")
 
-# — One-hot encode labels —
-num_classes = len(np.unique(y))
-y_train_cat = to_categorical(y_train, num_classes)
-y_val_cat   = to_categorical(y_val, num_classes)
+# One hot encode labels for categorical crossentropy loss 
+num_classes = len(np.unique(y))  # find how many unique classes there are
+y_train_cat = to_categorical(y_train, num_classes)  # turn labels into one hot vectors
+y_val_cat   = to_categorical(y_val, num_classes) 
 
-# — Build CNN model —
+# Build a simple CNN 
 model = Sequential([
-    Conv2D(32, (3,3), activation='relu', input_shape=img_size + (3,)),
-    MaxPooling2D(),
-    Conv2D(64, (3,3), activation='relu'),
-    MaxPooling2D(),
-    Conv2D(128, (3,3), activation='relu'),
-    MaxPooling2D(),
-    Flatten(),
-    Dense(128, activation='relu'),
-    Dropout(0.5),
-    Dense(num_classes, activation='softmax')
+    Conv2D(32, (3,3), activation='relu', input_shape=img_size + (3,)),  # first conv layer
+    MaxPooling2D(),  # downsample feature maps
+    Conv2D(64, (3,3), activation='relu'),  # second conv layer
+    MaxPooling2D(),  # downsample again
+    Conv2D(128, (3,3), activation='relu'),  # third conv layer
+    MaxPooling2D(),  # final downsampling
+    Flatten(),  # flatten 2D features to 1D
+    Dense(128, activation='relu'),  # fully connected layer
+    Dropout(0.5),  # randomly drop units to prevent overfitting
+    Dense(num_classes, activation='softmax')  # output layer with class probabilities
 ])
-model.compile(optimizer='adam',
-              loss='categorical_crossentropy',
-              metrics=['accuracy'])
+model.compile(
+    optimizer='adam',  # use the Adam optimizer
+    loss='categorical_crossentropy',  # loss for multi class classification
+    metrics=['accuracy']  # track accuracy during training
+)
 
-# — Train —
+# Train the CNN on the training data
 history = model.fit(
     X_train, y_train_cat,
     validation_data=(X_val, y_val_cat),
@@ -72,20 +75,20 @@ history = model.fit(
     batch_size=batch_size
 )
 
-# — Evaluate —
-y_pred_prob = model.predict(X_val)
-y_pred = np.argmax(y_pred_prob, axis=1)
-acc = accuracy_score(y_val, y_pred)
-print(f"\nValidation Accuracy: {acc:.2%}\n")
+# Evaluate model performance on validation set 
+y_pred_prob = model.predict(X_val)  # get predicted probabilities
+y_pred = np.argmax(y_pred_prob, axis=1)  # convert probabilities to class labels
+acc = accuracy_score(y_val, y_pred)  # compute accuracy
+print(f"\nValidation Accuracy: {acc:.2%}\n")  # display accuracy
 
 print("Classification Report:")
-print(classification_report(y_val, y_pred, digits=4))
+print(classification_report(y_val, y_pred, digits=4))  # detailed per class metrics
 
 print("Confusion Matrix:")
-print(confusion_matrix(y_val, y_pred))
+print(confusion_matrix(y_val, y_pred))  # show where the model gets confused
 
-# — Save model & history —
+# Save the trained model and training history for later use
 out_dir = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
-model.save(os.path.join(out_dir, "cnn_model.h5"))
-joblib.dump(history.history, os.path.join(out_dir, "cnn_history.joblib"))
+model.save(os.path.join(out_dir, "cnn_model.h5"))  # save the CNN model
+joblib.dump(history.history, os.path.join(out_dir, "cnn_history.joblib"))  # save training history
 print(f"\nSaved CNN model and history to: {out_dir}")
