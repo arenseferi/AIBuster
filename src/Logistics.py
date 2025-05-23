@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import cv2
 import os
-from sklearn.linear_model import LogisticRegression  # Import LogisticRegression
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
@@ -20,7 +20,7 @@ def load_images(df, col, size=(32, 32), labels=False):
         fullpath = os.path.join(base, relpath)  # Build full file path
         img = cv2.imread(fullpath, cv2.IMREAD_GRAYSCALE)  # Read image as grayscale
         if img is None:
-            continue  # Skip if image can't be loaded
+            continue  # Skip if image cant be loaded
         img = cv2.resize(img, size)  # Resize to target size
         X.append(img.flatten())  # Flatten image to 1D array
         if labels:

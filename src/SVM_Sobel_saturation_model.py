@@ -48,73 +48,68 @@ def extract_features(img_bgr):
         mean_v, std_v
     ])
 
-def load_features(df, size=(64, 64)):
-    X, y, paths = [], [], []  # Lists to hold features, labels, and file paths
-    base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))  # Base directory for images
-    for row in tqdm(df.itertuples(), total=len(df), desc="Extracting features"):
-        fullpath = os.path.join(base, row.file_name)  # Full path to image
-        img = cv2.imread(fullpath)  # Read the image
+def train(n_samples, progress_cb):
+    # Base directory for project root (where train.csv lives)
+    base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
+
+    # Load full CSV and sample n entries (with replacement if needed)
+    csv_path = os.path.join(base, "train.csv")
+    df_all   = pd.read_csv(csv_path)
+    total    = len(df_all)
+
+    if n_samples > total:
+        progress_cb(0, n_samples,
+                    f"Requested {n_samples} > {total} available; sampling with replacement")
+        df = df_all.sample(n=n_samples, replace=True, random_state=42).reset_index(drop=True)
+    else:
+        df = df_all.sample(n=n_samples, replace=False, random_state=42).reset_index(drop=True)
+        progress_cb(0, n_samples, f"Sampled {n_samples} entries")
+
+    # Feature extraction
+    X, y, paths = [], [], []
+    for i, row in enumerate(df.itertuples(), start=1):
+        fullpath = os.path.join(base, row.file_name)
+        img = cv2.imread(fullpath)
         if img is None:
-            continue  # Skip if image cant be loaded
-        img = cv2.resize(img, size)  # Resize to desired dimensions
-        X.append(extract_features(img))  # Extract and store features
-        y.append(row.label)  # Store label
-        paths.append(row.file_name)  # Store file name
-    return np.array(X), np.array(y), np.array(paths)  # Return arrays
+            continue  # skip if the image can't be loaded
+        img_resized = cv2.resize(img, (64, 64))
+        feats = extract_features(img_resized)
+        X.append(feats)
+        y.append(row.label)
+        paths.append(row.file_name)
 
-# Load and limit to 1,000 samples 
-df = pd.read_csv("../train.csv").iloc[:1000].reset_index(drop=True)
-print(f"Loaded {len(df)} entries from train.csv")  # Report load count
+        # report progress every 10%
+        if i % max(1, n_samples // 10) == 0:
+            progress_cb(i, n_samples, f"Extracted features {i}/{n_samples}")
 
-# Feature extraction
-X, y, paths = load_features(df)
-print(f"Extracted features for {X.shape[0]} samples × {X.shape[1]} features")  # Report feature shape
+    X = np.array(X)
+    y = np.array(y)
+    progress_cb(len(X), n_samples, f"Extracted {len(X)} feature vectors")
 
-# Split 80/20 into train and validation sets
-X_train, X_val, y_train, y_val, paths_train, paths_val = train_test_split(
-    X, y, paths, test_size=0.2, random_state=42
-)
-print(f"Training on {len(X_train)} samples; validating on {len(X_val)} samples")  # Report split sizes
+    # Split 80/20 into train and validation sets
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    progress_cb(0, 1, f"Training on {len(X_train)} samples; validating on {len(X_val)} samples")
 
-# Standardize features to zero mean and unit variance 
-scaler = StandardScaler()  # Create scaler
-X_train = scaler.fit_transform(X_train)  # Fit on train and transform
-X_val   = scaler.transform(X_val)       # Transform validation data
+    # Standardize features to zero mean and unit variance
+    scaler = StandardScaler().fit(X_train)
+    X_train = scaler.transform(X_train)
+    X_val   = scaler.transform(X_val)
 
-# Train SVM classifier with RBF kernel
-svm = SVC(kernel='rbf', C=1.0, gamma='scale')  # Create SVM model
-print("\nTraining SVM classifier with RBF kernel...")
-svm.fit(X_train, y_train)  # Train the model
+    # Train SVM classifier with RBF kernel
+    svm = SVC(kernel='rbf', C=1.0, gamma='scale', probability=True)
+    progress_cb(0, 1, "Training SVM classifier with RBF kernel")
+    svm.fit(X_train, y_train)
 
-# Evaluate on validation set 
-y_pred = svm.predict(X_val)  # Predict labels
-acc    = accuracy_score(y_val, y_pred)  # Compute accuracy
-print(f"\nValidation Accuracy: {acc:.2%}\n")  # Display accuracy
+    # Evaluate on validation set
+    y_pred = svm.predict(X_val)
+    acc    = accuracy_score(y_val, y_pred)
+    progress_cb(1, 1, f"Validation Accuracy: {acc:.2%}")
 
-# Print classification report in a table format
-cr = classification_report(y_val, y_pred, output_dict=True, digits=4)
-cr_df = pd.DataFrame(cr).T  # Convert report to DataFrame
-print("Classification Report:")
-print(cr_df)  # Display classification metrics
-
-# Print confusion matrix
-cm = confusion_matrix(y_val, y_pred)
-print("\nConfusion Matrix:")
-print(cm)  # Show confusion matrix
-
-# Save scaler and SVM model for later use 
-out_dir = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))  # Output directory
-joblib.dump(scaler, os.path.join(out_dir, "scaler.joblib"))  # Save scaler
-joblib.dump(svm,    os.path.join(out_dir, "svm_model.joblib"))  # Save SVM model
-print(f"\nSaved scaler & SVM model to {out_dir}")  # Confirm save path
-
-# Save list of misclassified images
-wrong_mask = (y_pred != y_val)  # Mask for incorrect predictions
-wrong_df = pd.DataFrame({
-    "file_name": paths_val[wrong_mask],      # Misclassified file names
-    "true_label": y_val[wrong_mask],         # Actual labels
-    "predicted_label": y_pred[wrong_mask]    # Predicted labels
-})
-wrong_csv = os.path.join(out_dir, "wrong_predictions_svm.csv")  # CSV path
-wrong_df.to_csv(wrong_csv, index=False)  # Write to CSV
-print(f"Saved misclassified image list to {wrong_csv}")  # Confirm CSV save
+    # Save scaler and SVM model for later use
+    out_dir = os.path.join(base, "trained_models")
+    os.makedirs(out_dir, exist_ok=True)
+    joblib.dump(scaler, os.path.join(out_dir, "svm_scaler.joblib"))
+    joblib.dump(svm,    os.path.join(out_dir, "svm_model.joblib"))
+    progress_cb(1, 1, f"Saved scaler & SVM model to: {out_dir}")

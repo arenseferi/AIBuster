@@ -1,4 +1,3 @@
-# Needed imports
 from tqdm import tqdm
 import pandas as pd
 import numpy as np
@@ -7,7 +6,7 @@ import os
 from skimage.feature import local_binary_pattern
 from sklearn.model_selection import train_test_split
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score
 import joblib
 
 def extract_features(img, lbp_points=8, lbp_radius=1):
@@ -28,50 +27,61 @@ def extract_features(img, lbp_points=8, lbp_radius=1):
     # Return combined feature vector (histogram and gradient stats)
     return np.hstack([hist, mean_mag, std_mag])
 
-def load_features(df, size=(64, 64)):
-    # lists to hold features and labels
-    X, y = [], []
-    # Base directory for image files
+def train(n_samples, progress_cb):
+    # Base directory for project root (where train.csv lives)
     base = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
-    # Loop over each row with a progress bar
-    for row in tqdm(df.itertuples(), total=len(df), desc="Extracting features"):
-        fullpath = os.path.join(base, row.file_name)  # Full path to the image
-        img = cv2.imread(fullpath, cv2.IMREAD_GRAYSCALE)  # Read image in grayscale
+
+    # Load full CSV and sample n entries (with replacement if needed)
+    csv_path = os.path.join(base, "train.csv")
+    df_all   = pd.read_csv(csv_path)
+    total    = len(df_all)
+
+    if n_samples > total:
+        progress_cb(0, n_samples,
+                    f"Requested {n_samples} > {total} available; sampling with replacement")
+        df = df_all.sample(n=n_samples, replace=True, random_state=42).reset_index(drop=True)
+    else:
+        df = df_all.sample(n=n_samples, replace=False, random_state=42).reset_index(drop=True)
+        progress_cb(0, n_samples, f"Sampled {n_samples} entries")
+
+    # Feature extraction
+    X, y = [], []
+    for i, row in enumerate(df.itertuples(), start=1):
+        fullpath = os.path.join(base, row.file_name)
+        img = cv2.imread(fullpath, cv2.IMREAD_GRAYSCALE)
         if img is None:
-            continue  # Skip if the image cant be loaded
-        img = cv2.resize(img, size)  # Resize to target size
-        X.append(extract_features(img))  # Extract and store features
-        y.append(row.label)  # Store corresponding label
-    # Convert lists to NumPy arrays and return
-    return np.array(X), np.array(y)
+            continue  # skip if the image can't be loaded
+        img = cv2.resize(img, (64, 64))
+        feats = extract_features(img)
+        X.append(feats)
+        y.append(row.label)
 
-# Read and sample data for quick testing
-train_df = pd.read_csv("../train.csv").sample(n=1000, random_state=42).reset_index(drop=True)
+        # report progress every 10%
+        if i % max(1, n_samples // 10) == 0:
+            progress_cb(i, n_samples, f"Extracted features {i}/{n_samples}")
 
-# Extract features and labels from the sampled images
-X, y = load_features(train_df)
-print(f"Extracted features for {X.shape[0]} images, each with {X.shape[1]} dims")  # Report extraction status
+    X = np.array(X)
+    y = np.array(y)
+    progress_cb(len(X), n_samples, f"Extracted {len(X)} feature vectors")
 
-# Split features into training and validation sets
-X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-print(f"Training on {X_train.shape[0]} samples; validating on {X_val.shape[0]} samples")  # Report split sizes
+    # Split 80/20 into train and validation sets
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    progress_cb(0, 1, f"Training on {len(X_train)} samples; validating on {len(X_val)} samples")
 
-# Initialize and train the LDA classifier
-lda = LinearDiscriminantAnalysis()  # Create LDA model
-lda.fit(X_train, y_train)  # Train on training data
+    # Initialize and train the LDA classifier
+    lda = LinearDiscriminantAnalysis()
+    progress_cb(0, 1, "Training LDA classifier")
+    lda.fit(X_train, y_train)
 
-# Predict on validation set and compute accuracy
-y_pred = lda.predict(X_val)  # Predict labels
-acc = accuracy_score(y_val, y_pred)  # Calculate accuracy
-print(f"\nValidation Accuracy: {acc:.2%}\n")  # Display accuracy
+    # Evaluate on validation set
+    y_pred = lda.predict(X_val)
+    acc    = accuracy_score(y_val, y_pred)
+    progress_cb(1, 1, f"Validation Accuracy: {acc:.2%}")
 
-print("Classification Report:")
-print(classification_report(y_val, y_pred, digits=4))  # Show precision, recall, f1-score
-
-print("Confusion Matrix:")
-print(confusion_matrix(y_val, y_pred))  # Display confusion matrix
-
-# Save the trained LDA model for later use
-model_path = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir, "lda_model.joblib"))
-joblib.dump(lda, model_path)  # Write model to disk
-print(f"\nModel saved to: {model_path}")  # Confirm save location
+    # Save the trained LDA model for later use
+    out_dir = os.path.join(base, "trained_models")
+    os.makedirs(out_dir, exist_ok=True)
+    joblib.dump(lda, os.path.join(out_dir, "lbp1_model.joblib"))
+    progress_cb(1, 1, f"Saved LDA model to: {out_dir}")

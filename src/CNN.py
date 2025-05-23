@@ -1,5 +1,3 @@
-# src/CNN.py
-
 # Needed imports
 import pandas as pd
 import numpy as np
